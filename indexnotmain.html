@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grease-Care: Smart Dashboard (3-Theme Version)</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+    <style>
+        :root {
+            --primary: #6f42c1;
+            --bg: #f8f9fd;
+            --card-bg: #ffffff;
+            --text-main: #333333;
+            --text-sub: #888888;
+            --border: #eeeeee;
+            --sidebar-bg: #ffffff;
+            --danger: #ff5252;
+            --success: #28a745;
+        }
+
+        /* Dark Mode Theme */
+        [data-theme="dark"] {
+            --bg: #121212;
+            --card-bg: #1e1e1e;
+            --text-main: #e0e0e0;
+            --text-sub: #aaaaaa;
+            --border: #333333;
+            --sidebar-bg: #181818;
+        }
+
+        /* --- ส่วนที่เพิ่มใหม่: Picture Mode Theme --- */
+        [data-theme="picture"] {
+            --bg: transparent; /* พื้นหลังหลักโปร่งใสเพื่อให้เห็นรูป */
+            --card-bg: rgba(255, 255, 255, 0.75); /* สีการ์ดขาวใส */
+            --sidebar-bg: rgba(255, 255, 255, 0.85);
+            --text-main: #222222;
+            --text-sub: #555555;
+            --border: rgba(0, 0, 0, 0.1);
+        }
+
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background-color: var(--bg); 
+            margin: 0; display: flex; height: 100vh; 
+            color: var(--text-main); overflow: hidden;
+            transition: background-color 0.3s, color 0.3s; /* เพิ่ม transition */
+        }
+
+        /* --- ส่วนที่เพิ่มใหม่: ตั้งค่าพื้นหลังรูปภาพ --- */
+        body[data-theme="picture"] {
+            background-image: url('jork.jpg'); /* << ไฟล์รูปชื่อนี้ */
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }
+
+        /* --- ส่วนที่เพิ่มใหม่: เอฟเฟกต์กระจกฝ้าเมื่อใช้ Picture Mode --- */
+        [data-theme="picture"] .card, 
+        [data-theme="picture"] .sidebar {
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+        }
+        
+        .sidebar { 
+            width: 200px; background: var(--sidebar-bg); 
+            border-right: 1px solid var(--border); padding: 20px; 
+            display: flex; flex-direction: column; transition: 0.3s;
+        }
+        .logo { color: var(--primary); font-weight: bold; font-size: 22px; margin-bottom: 30px; }
+        .menu-item { 
+            padding: 12px; border-radius: 8px; color: var(--text-sub); 
+            text-decoration: none; margin-bottom: 5px; font-size: 14px;
+            cursor: pointer; transition: 0.2s;
+        }
+        .menu-item.active { background: var(--primary); color: white; }
+        .menu-item:hover:not(.active) { background: var(--border); }
+
+        .main-content { flex: 1; padding: 20px; overflow-y: auto; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .dashboard-grid { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            grid-gap: 15px; 
+            margin-bottom: 15px; 
+        }
+        .card { 
+            background: var(--card-bg); padding: 15px; 
+            border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: 0.3s;
+        }
+
+        .stat-card { display: flex; align-items: center; gap: 12px; }
+        .icon-box { width: 45px; height: 45px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .val-big { font-size: 22px; font-weight: bold; display: block; }
+        .label-sub { color: var(--text-sub); font-size: 12px; }
+
+        .chart-box { height: 250px; }
+
+        .btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; }
+        .btn { padding: 12px; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 14px; transition: 0.2s; }
+        .btn-on { background: var(--primary); color: white; }
+        .btn-off { background: #eee; color: #555; }
+        .btn-off.active { background: var(--danger); color: white; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* Switch UI (ไม่ได้ใช้แล้ว แต่เก็บไว้เผื่อในอนาคต) */
+        .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+        
+        /* --- สไตล์สำหรับ Dropdown เลือกธีม --- */
+        .theme-select {
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+            color: var(--text-main);
+            cursor: pointer;
+            outline: none;
+            font-family: inherit;
+        }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="logo">✦ Grease-care</div>
+        <div class="menu-item active" onclick="showTab('overview', this)">Overview</div>
+        <div class="menu-item" onclick="showTab('history', this)">History</div>
+        <div class="menu-item" onclick="showTab('settings', this)">Settings</div>
+    </div>
+
+    <div class="main-content">
+        <div id="overview" class="tab-content active">
+            <h1 style="font-size: 20px;">Real-time Monitoring</h1>
+            
+            <div class="dashboard-grid">
+                <div class="card stat-card">
+                    <div class="icon-box" style="background: #f3ebff; color: #6f42c1;">🌡️</div>
+                    <div><span class="val-big" id="temp-val">-- °C</span><span class="label-sub">Oil Temperature</span></div>
+                </div>
+                <div class="card stat-card">
+                    <div class="icon-box" id="status-icon" style="background: #e7f9ed;">✅</div>
+                    <div><span class="val-big" id="status-text">Normal</span><span class="label-sub">Grease Level</span></div>
+                </div>
+                <div class="card stat-card">
+                    <div class="icon-box" style="background: #fff4e5; color: #ff9800;">⚙️</div>
+                    <div><span class="val-big" id="pump-display">Standby</span><span class="label-sub">Pump State</span></div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1.3fr 1fr; grid-gap: 15px;">
+                <div class="card chart-box">
+                    <h3 style="font-size: 14px; margin: 0 0 10px 0;">Temperature Trend (°C)</h3>
+                    <canvas id="tempChart"></canvas>
+                </div>
+                <div class="card">
+                    <h3 style="font-size: 14px; margin: 0;">Pump Control</h3>
+                    <div class="btn-group">
+                        <button id="on-btn" class="btn btn-on" onclick="sendCmd('1')" disabled>START PUMP</button>
+                        <button id="off-btn" class="btn btn-off" onclick="sendCmd('0')" disabled>STOP PUMP</button>
+                    </div>
+                    <div id="pump-indicator" style="font-size: 13px; margin-top: 10px; padding: 6px 12px; border-radius: 20px; background: var(--border); display: inline-block;">Waiting...</div>
+                    <p id="lock-notice" style="color: var(--danger); font-size: 11px; margin-top: 15px; display: none;">⚠️ Locked: Low grease level</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="history" class="tab-content">
+            <h1 style="font-size: 20px;">Operation History</h1>
+            <div class="card">
+                <table>
+                    <thead><tr><th>Time</th><th>Event</th><th>Temp</th></tr></thead>
+                    <tbody id="history-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="settings" class="tab-content">
+            <h1 style="font-size: 20px;">Settings</h1>
+            <div class="card" style="max-width: 450px;">
+                <div class="toggle-row" style="border-bottom: none;">
+                    <span>Dashboard Theme</span>
+                    <select id="theme-selector" class="theme-select" onchange="changeTheme()">
+                        <option value="light">Light Theme</option>
+                        <option value="dark">Dark Theme</option>
+                        <option value="picture">Banana Theme</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Firebase Configuration (ใส่ค่าของคุณ) ---
+        const firebaseConfig = { apiKey: "AIzaSyAes8uvjRS5yjDzUhnqM8poHcXm-i0D3Nk", databaseURL: "https://grease-trap-history-default-rtdb.asia-southeast1.firebasedatabase.app" };
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // --- 2. Chart Setup ---
+        const tempCtx = document.getElementById('tempChart').getContext('2d');
+        const tempData = []; const tempLabels = [];
+        const tempChart = new Chart(tempCtx, {
+            type: 'line',
+            data: { labels: tempLabels, datasets: [{ label: 'Temp', data: tempData, borderColor: '#6f42c1', tension: 0.4, fill: true, backgroundColor: 'rgba(111, 66, 193, 0.1)' }] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { x: { display: false } }, plugins: { legend: { display: false } } }
+        });
+
+        // --- 3. MQTT Setup ---
+        const client = mqtt.connect('ws://broker.hivemq.com:8000/mqtt');
+        let currentTemp = 0; let lastPumpState = -1;
+        let greaseState = false; let pumpState = false;
+
+        client.on('connect', () => { client.subscribe('myiot/temp'); client.subscribe('myiot/grease_status'); client.subscribe('myiot/pump_real_status'); });
+        client.on('message', (topic, message) => {
+            const val = message.toString();
+            if (topic === 'myiot/temp') {
+                currentTemp = val; document.getElementById('temp-val').innerText = val + " °C";
+                if (tempData.length > 15) { tempData.shift(); tempLabels.shift(); }
+                tempData.push(val); tempLabels.push(new Date().toLocaleTimeString()); tempChart.update();
+            }
+            if (topic === 'myiot/grease_status') { greaseState = (val === "1"); updateUI(); }
+            if (topic === 'myiot/pump_real_status') {
+                pumpState = (val === "1"); updateUI();
+                if(pumpState !== lastPumpState) { saveLog(pumpState ? "Pump Started" : "Pump Stopped"); lastPumpState = pumpState; }
+            }
+        });
+
+        // --- 4. Logic Functions ---
+        function saveLog(e) { database.ref('logs').push({ time: new Date().toLocaleString('th-TH'), event: e, temp: currentTemp }); }
+
+        database.ref('logs').limitToLast(12).on('value', snapshot => {
+            let html = ""; const data = snapshot.val();
+            if (data) Object.keys(data).reverse().forEach(key => {
+                html += `<tr><td>${data[key].time}</td><td>${data[key].event}</td><td>${data[key].temp}°C</td></tr>`;
+            });
+            document.getElementById('history-body').innerHTML = html;
+        });
+
+        function updateUI() {
+            document.getElementById('on-btn').disabled = !(greaseState && !pumpState);
+            document.getElementById('off-btn').disabled = !pumpState;
+            if(pumpState) document.getElementById('off-btn').classList.add('active'); else document.getElementById('off-btn').classList.remove('active');
+            document.getElementById('pump-display').innerText = pumpState ? "Working" : "Standby";
+            document.getElementById('status-text').innerText = greaseState ? "FULL!" : "Normal";
+            document.getElementById('status-text').style.color = greaseState ? "var(--danger)" : "var(--success)";
+            document.getElementById('status-icon').innerText = greaseState ? "🚨" : "✅";
+            document.getElementById('status-icon').style.background = greaseState ? "#ffebee" : "#e7f9ed";
+            document.getElementById('pump-indicator').innerText = pumpState ? "⚡ PUMPING..." : "Pump is Standby";
+            document.getElementById('lock-notice').style.display = (!greaseState && !pumpState) ? "block" : "none";
+        }
+
+        function showTab(id, el) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
+            document.getElementById(id).classList.add('active'); el.classList.add('active');
+        }
+
+        // --- ส่วนที่แก้ไข: ฟังก์ชันเปลี่ยนธีมแบบ 3 ทาง ---
+        function changeTheme() {
+            const theme = document.getElementById('theme-selector').value;
+            document.body.setAttribute('data-theme', theme);
+            // บันทึกค่าธีมที่เลือกลงใน LocalStorage เพื่อให้จำค่าเดิมตอนรีเฟรชหน้า
+            localStorage.setItem('selected-theme', theme);
+        }
+
+        // โหลดธีมที่บันทึกไว้เมื่อเปิดหน้าเว็บ
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('selected-theme') || 'light';
+            const selector = document.getElementById('theme-selector');
+            if (selector) {
+                selector.value = savedTheme;
+                document.body.setAttribute('data-theme', savedTheme);
+            }
+        });
+
+        function sendCmd(v) { client.publish('myiot/control', v); }
+    </script>
+</body>
+</html>

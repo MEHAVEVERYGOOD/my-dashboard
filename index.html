@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grease-Care Smart Dashboard</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* --- CSS Variables สำหรับ Theme --- */
+        :root {
+            --primary: #6f42c1;
+            --bg: #f8f9fd;
+            --card-bg: #ffffff;
+            --text-main: #333333;
+            --text-sub: #888888;
+            --border: #eeeeee;
+            --sidebar-bg: #ffffff;
+            --danger: #ff5252;
+            --success: #28a745;
+        }
+
+        /* --- Dark Mode Variables --- */
+        [data-theme="dark"] {
+            --bg: #121212;
+            --card-bg: #1e1e1e;
+            --text-main: #e0e0e0;
+            --text-sub: #aaaaaa;
+            --border: #333333;
+            --sidebar-bg: #181818;
+        }
+
+        body { 
+            font-family: 'Segoe UI', Tahoma, sans-serif; 
+            background-color: var(--bg); 
+            margin: 0; 
+            display: flex; 
+            height: 100vh; 
+            color: var(--text-main);
+            overflow: hidden;
+            transition: background 0.3s, color 0.3s;
+        }
+        
+        .sidebar { 
+            width: 200px; 
+            background: var(--sidebar-bg); 
+            border-right: 1px solid var(--border); 
+            padding: 20px; 
+            display: flex; 
+            flex-direction: column; 
+            transition: background 0.3s;
+        }
+        .logo { color: var(--primary); font-weight: bold; font-size: 22px; margin-bottom: 30px; }
+        .menu-item { 
+            padding: 12px; border-radius: 8px; color: var(--text-sub); 
+            text-decoration: none; margin-bottom: 5px; font-size: 14px;
+            cursor: pointer; transition: 0.2s;
+        }
+        .menu-item.active { background: var(--primary); color: white; }
+        .menu-item:hover:not(.active) { background: var(--border); }
+
+        .main-content { flex: 1; padding: 20px; overflow-y: auto; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        
+        .dashboard-grid { display: grid; grid-template-columns: repeat(4, 1fr); grid-gap: 15px; margin-bottom: 15px; }
+        .card { 
+            background: var(--card-bg); 
+            padding: 15px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); 
+            transition: background 0.3s;
+        }
+
+        .stat-card { display: flex; align-items: center; gap: 12px; }
+        .icon-box { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .val-big { font-size: 20px; font-weight: bold; display: block; }
+        .label-sub { color: var(--text-sub); font-size: 12px; }
+
+        .content-row { display: grid; grid-template-columns: 1.3fr 1fr; grid-gap: 15px; }
+        .chart-box { height: 250px; }
+
+        .btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; }
+        .btn { padding: 12px; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 14px; transition: 0.2s; }
+        .btn-on { background: var(--primary); color: white; }
+        .btn-off { background: #eee; color: #555; }
+        .btn-off.active { background: var(--danger); color: white; }
+        .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        #pump-indicator { font-size: 13px; margin-top: 10px; padding: 6px 12px; border-radius: 20px; background: var(--border); display: inline-block; }
+        #lock-notice { color: var(--danger); font-size: 11px; margin-top: 10px; display: none; }
+
+        /* Settings Toggle */
+        .toggle-container { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+        .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--primary); }
+        input:checked + .slider:before { transform: translateX(20px); }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="logo">✦ Grease-care</div>
+        <div class="menu-item active" onclick="showTab('overview', this)">Overview</div>
+        <div class="menu-item" onclick="showTab('settings', this)">Settings</div>
+    </div>
+
+    <div class="main-content">
+        <div id="overview" class="tab-content active">
+            <div class="header">
+                <h1 style="font-size: 20px; margin: 0;">Machine Overview</h1>
+                <div id="connection-status" style="font-size: 12px; color: var(--success);">● System Online</div>
+            </div>
+
+            <div class="dashboard-grid">
+                <div class="card stat-card">
+                    <div class="icon-box" style="background: #f3ebff; color: #6f42c1;">🌡️</div>
+                    <div><span class="val-big" id="temp-val">-- °C</span><span class="label-sub">Oil Temp (Sim)</span></div>
+                </div>
+                <div class="card stat-card">
+                    <div class="icon-box" id="status-icon" style="background: #e7f9ed; color: var(--success);">✅</div>
+                    <div><span class="val-big" id="status-text">Normal</span><span class="label-sub">Grease Level</span></div>
+                </div>
+                <div class="card stat-card">
+                    <div class="icon-box" style="background: #fff4e5; color: #ff9800;">⚙️</div>
+                    <div><span class="val-big" id="pump-display">Standby</span><span class="label-sub">Pump State</span></div>
+                </div>
+                <div class="card stat-card">
+                    <div class="icon-box" style="background: #eef2ff; color: #3f51b5;">📦</div>
+                    <div><span class="val-big">Solid Fuel</span><span class="label-sub">Ready to output</span></div>
+                </div>
+            </div>
+
+            <div class="content-row">
+                <div class="card chart-box">
+                    <h3 style="font-size: 14px; margin: 0 0 10px 0;">Pump History</h3>
+                    <canvas id="pumpChart"></canvas>
+                </div>
+                <div class="card">
+                    <h3 style="font-size: 14px; margin: 0 0 5px 0;">Pump Control</h3>
+                    <div class="btn-group">
+                        <button id="on-btn" class="btn btn-on" onclick="sendCmd('1')" disabled>START PUMP</button>
+                        <button id="off-btn" class="btn btn-off" onclick="sendCmd('0')" disabled>STOP PUMP</button>
+                    </div>
+                    <div id="pump-indicator">Waiting for data...</div>
+                    <p id="lock-notice">⚠️ Operation Locked: Low grease level</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="settings" class="tab-content">
+            <h1 style="font-size: 20px;">Settings</h1>
+            <div class="card" style="max-width: 500px;">
+                <h3 style="font-size: 16px; margin-top: 0;">Appearance</h3>
+                <div class="toggle-container">
+                    <span>Dark Mode</span>
+                    <label class="switch">
+                        <input type="checkbox" id="theme-toggle" onclick="toggleTheme()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="toggle-container">
+                    <span>MQTT Status Notifications</span>
+                    <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Navigation Logic ---
+        function showTab(tabId, el) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            el.classList.add('active');
+        }
+
+        // --- Theme Logic ---
+        function toggleTheme() {
+            const isDark = document.getElementById('theme-toggle').checked;
+            document.body.setAttribute('data-theme', isDark ? 'dark' : 'light');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        }
+
+        // Load saved theme
+        if(localStorage.getItem('theme') === 'dark') {
+            document.getElementById('theme-toggle').checked = true;
+            document.body.setAttribute('data-theme', 'dark');
+        }
+
+        // --- MQTT & Chart (เหมือนเดิม) ---
+        const client = mqtt.connect('ws://broker.hivemq.com:8000/mqtt');
+        let greaseState = false; let pumpState = false;
+        const pumpCtx = document.getElementById('pumpChart').getContext('2d');
+        const pumpData = []; const pumpLabels = [];
+        const pumpChart = new Chart(pumpCtx, {
+            type: 'line',
+            data: { labels: pumpLabels, datasets: [{ data: pumpData, borderColor: '#6f42c1', stepped: true, fill: true, pointRadius: 0 }] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { display: false }, x: { grid: { display: false } } }, plugins: { legend: { display: false } } }
+        });
+
+        client.on('connect', () => { client.subscribe('myiot/temp'); client.subscribe('myiot/grease_status'); client.subscribe('myiot/pump_real_status'); });
+
+        client.on('message', (topic, message) => {
+            const data = message.toString();
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            if (topic === 'myiot/temp') document.getElementById('temp-val').innerText = data + " °C";
+            if (topic === 'myiot/grease_status') { greaseState = (data === "1"); updateUI(); }
+            if (topic === 'myiot/pump_real_status') {
+                pumpState = (data === "1");
+                if (pumpData.length > 20) { pumpData.shift(); pumpLabels.shift(); }
+                pumpData.push(pumpState ? 1 : 0); pumpLabels.push(now);
+                pumpChart.update(); updateUI();
+            }
+        });
+
+        function updateUI() {
+            const onBtn = document.getElementById('on-btn'); const offBtn = document.getElementById('off-btn');
+            const notice = document.getElementById('lock-notice'); const indicator = document.getElementById('pump-indicator');
+            const display = document.getElementById('pump-display'); const statusText = document.getElementById('status-text');
+            onBtn.disabled = !(greaseState && !pumpState); offBtn.disabled = !pumpState;
+            if(pumpState) offBtn.classList.add('active'); else offBtn.classList.remove('active');
+            notice.style.display = (!greaseState && !pumpState) ? "block" : "none";
+            display.innerText = pumpState ? "Working" : "Standby";
+            indicator.innerText = pumpState ? "⚡ PUMPING..." : "Pump is Standby";
+            if (greaseState) { statusText.innerText = "FULL!"; statusText.style.color = "var(--danger)"; } 
+            else { statusText.innerText = "Normal"; statusText.style.color = "var(--success)"; }
+        }
+
+        function sendCmd(val) { client.publish('myiot/control', val); }
+    </script>
+</body>
+</html>
