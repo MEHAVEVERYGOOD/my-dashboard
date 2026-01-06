@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grease-Care: Smart Dashboard</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <style>
+        :root { --primary: #6f42c1; --bg: #f8f9fd; --card-bg: #ffffff; --text-main: #333; --text-sub: #888; --border: #eee; --danger: #ff5252; --success: #28a745; }
+        [data-theme="dark"] { --bg: #121212; --card-bg: #1e1e1e; --text-main: #e0e0e0; --text-sub: #aaa; --border: #333; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; display: flex; height: 100vh; color: var(--text-main); transition: 0.3s; }
+        .sidebar { width: 200px; background: var(--card-bg); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; }
+        .logo { color: var(--primary); font-weight: bold; font-size: 22px; margin-bottom: 30px; }
+        .menu-item { padding: 12px; border-radius: 8px; color: var(--text-sub); text-decoration: none; margin-bottom: 5px; cursor: pointer; }
+        .menu-item.active { background: var(--primary); color: white; }
+        .main-content { flex: 1; padding: 20px; overflow-y: auto; }
+        .tab-content { display: none; } .tab-content.active { display: block; }
+        .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-gap: 15px; margin-bottom: 15px; }
+        .card { background: var(--card-bg); padding: 15px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .stat-card { display: flex; align-items: center; gap: 12px; }
+        .icon-box { width: 45px; height: 45px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .val-big { font-size: 20px; font-weight: bold; display: block; }
+        .btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; }
+        .btn { padding: 12px; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
+        .btn-on { background: var(--primary); color: white; }
+        .btn-off { background: #eee; color: #555; } .btn-off.active { background: var(--danger); color: white; }
+        .btn:disabled { opacity: 0.3; }
+        .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; transition: .4s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background: var(--primary); }
+        input:checked + .slider:before { transform: translateX(20px); }
+        table { width: 100%; border-collapse: collapse; } th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="logo">✦ Grease-care</div>
+        <div class="menu-item active" onclick="showTab('overview', this)">Overview</div>
+        <div class="menu-item" onclick="showTab('history', this)">History</div>
+        <div class="menu-item" onclick="showTab('settings', this)">Settings</div>
+    </div>
+    <div class="main-content">
+        <div id="overview" class="tab-content active">
+            <h1>Overview</h1>
+            <div class="dashboard-grid">
+                <div class="card stat-card"><div class="icon-box" style="background: #f3ebff; color: #6f42c1;">🌡️</div><div><span class="val-big" id="temp-val">-- °C</span><span style="font-size:12px;color:var(--text-sub)">Temperature</span></div></div>
+                <div class="card stat-card"><div class="icon-box" id="status-icon" style="background: #f1f3f5;">☁️</div><div><span class="val-big" id="status-text">Air</span><span style="font-size:12px;color:var(--text-sub)">Oil Level</span></div></div>
+                <div class="card stat-card"><div class="icon-box" style="background: #fff4e5; color: #ff9800;">⚙️</div><div><span class="val-big" id="pump-display">Standby</span><span style="font-size:12px;color:var(--text-sub)">Pump</span></div></div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1.3fr 1fr; grid-gap: 15px;">
+                <div class="card" style="height:250px;"><h3 style="font-size:14px;margin:0 0 10px 0;">Temp Trend</h3><canvas id="tempChart"></canvas></div>
+                <div class="card"><h3>Control</h3><div class="btn-group"><button id="on-btn" class="btn btn-on" onclick="sendCmd('1')" disabled>START PUMP</button><button id="off-btn" class="btn btn-off" onclick="sendCmd('0')" disabled>STOP PUMP</button></div><p id="lock-notice" style="color:var(--danger);font-size:11px;margin-top:10px;"></p></div>
+            </div>
+        </div>
+        <div id="history" class="tab-content"><h1>History</h1><div class="card"><table><thead><tr><th>Time</th><th>Event</th><th>Temp</th></tr></thead><tbody id="history-body"></tbody></table></div></div>
+        <div id="settings" class="tab-content"><h1>Settings</h1><div class="card" style="max-width:400px;"><div style="display:flex;justify-content:space-between;align-items:center;"><span>Dark Mode</span><label class="switch"><input type="checkbox" id="theme-toggle" onclick="toggleTheme()"><span class="slider"></span></label></div></div></div>
+    </div>
+
+    <script>
+        const firebaseConfig = { apiKey: "AIzaSyAes8uvjRS5yjDzUhnqM8poHcXm-i0D3Nk", databaseURL: "https://grease-trap-history-default-rtdb.asia-southeast1.firebasedatabase.app" };
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        const client = mqtt.connect('ws://broker.hivemq.com:8000/mqtt');
+        let currentTemp = 0, greaseCode = 0, pumpState = false, lastPumpState = -1;
+
+        const tempCtx = document.getElementById('tempChart').getContext('2d');
+        const tempData = [], tempLabels = [];
+        
+        // --- ส่วนที่แก้ไข: ล็อคแกน Y ---
+        const tempChart = new Chart(tempCtx, { 
+            type: 'line', 
+            data: { 
+                labels: tempLabels, 
+                datasets: [{ 
+                    data: tempData, 
+                    borderColor: '#6f42c1', 
+                    tension: 0.4, 
+                    fill: true, 
+                    backgroundColor: 'rgba(111, 66, 193, 0.1)' 
+                }] 
+            }, 
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                scales: { 
+                    x: { display: false },
+                    y: {  // เพิ่มส่วนนี้เพื่อล็อคแกน Y
+                        min: 0,
+                        max: 50
+                    }
+                }, 
+                plugins: { legend: { display: false } } 
+            } 
+        });
+        // -----------------------------
+
+        client.on('connect', () => { client.subscribe('myiot/temp'); client.subscribe('myiot/grease_status'); client.subscribe('myiot/pump_real_status'); });
+        client.on('message', (topic, message) => {
+            const data = message.toString();
+            if (topic === 'myiot/temp') { currentTemp = data; document.getElementById('temp-val').innerText = data + " °C"; if (tempData.length > 15) { tempData.shift(); tempLabels.shift(); } tempData.push(data); tempLabels.push(new Date().toLocaleTimeString()); tempChart.update(); }
+            if (topic === 'myiot/grease_status') { greaseCode = parseInt(data); updateUI(); }
+            if (topic === 'myiot/pump_real_status') { pumpState = (data === "1"); updateUI(); if(pumpState !== lastPumpState) { database.ref('logs').push({ time: new Date().toLocaleString('th-TH'), event: pumpState ? "Pump Started" : "Pump Stopped", temp: currentTemp }); lastPumpState = pumpState; } }
+        });
+
+        function updateUI() {
+            const onBtn = document.getElementById('on-btn'), offBtn = document.getElementById('off-btn');
+            const statusText = document.getElementById('status-text'), statusIcon = document.getElementById('status-icon'), notice = document.getElementById('lock-notice');
+            onBtn.disabled = !(greaseCode === 1 && !pumpState); offBtn.disabled = !pumpState;
+            if(pumpState) offBtn.classList.add('active'); else offBtn.classList.remove('active');
+            document.getElementById('pump-display').innerText = pumpState ? "Working" : "Standby";
+
+            if (greaseCode === 0) { statusText.innerText = "Air"; statusIcon.innerText = "☁️"; statusIcon.style.background = "#f1f3f5"; notice.innerText = "⚠️ Locked: Air detected"; notice.style.display = pumpState ? "none" : "block"; } 
+            else if (greaseCode === 1) { statusText.innerText = "Grease Detected"; statusIcon.innerText = "🛢️"; statusIcon.style.background = "#f3ebff"; notice.style.display = "none"; } 
+            else if (greaseCode === 2) { statusText.innerText = "No Grease (Water)"; statusIcon.innerText = "💧"; statusIcon.style.background = "#e7f3ff"; notice.innerText = "⚠️ Locked: No Grease (Water)"; notice.style.display = "block"; }
+        }
+
+        database.ref('logs').limitToLast(10).on('value', snap => { let html = ""; const d = snap.val(); if(d) Object.keys(d).reverse().forEach(k => html += `<tr><td>${d[k].time}</td><td>${d[k].event}</td><td>${d[k].temp}°C</td></tr>`); document.getElementById('history-body').innerHTML = html; });
+        function showTab(id, el) { document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active')); document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active')); document.getElementById(id).classList.add('active'); el.classList.add('active'); }
+        function toggleTheme() { document.body.setAttribute('data-theme', document.getElementById('theme-toggle').checked ? 'dark' : 'light'); }
+        function sendCmd(v) { client.publish('myiot/control', v); }
+    </script>
+</body>
+</html>
